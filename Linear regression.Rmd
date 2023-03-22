@@ -1,0 +1,909 @@
+ ---
+title: "R Notebook"
+output: html_notebook
+---
+
+### Load Packages
+
+```{r warning = FALSE, message = FALSE}
+library(car) # use for multicollinearity test (i.e. Variance Inflation Factor(VIF))
+library(MASS) # for stepAIC
+library(ggplot2) # use for visualization
+library(gridExtra) # To plot multiple ggplot graphs in a grid
+library(olsrr) #use for multicollinearity test
+library(tidyverse)
+library(GGally)
+library(caTools)
+```
+
+```{r}
+install.packages("car")
+install.packages("olsrr")
+install.packages("tidyverse")
+install.packages("ggplot2")
+install.packages("forecast")
+```
+
+```{r}
+cars_data <- read.csv("/Users/user/Desktop/Data Lab/R codes/Car_Dataset.csv")
+
+
+```
+
+
+EXPLORATORY DATA ANALYSIS
+
+## check make up of data
+
+```{r}
+# Look at the first and last few rows to ensure that the data is read in properly and check for consistency
+
+head(cars_data)
+tail(cars_data)
+
+dim(cars_data)
+# There are 398 observations and 9 variables
+```
+
+```{r}
+colnames(cars_data)
+```
+
+```{r}
+sum(is.na(cars_data))
+# There are currently no missing values
+```
+
+```{r}
+View(cars_data)
+
+# Car names has unique values and should be further analyzed to extract some useful information.
+# Values in the origin column are encoded ,it would be easier to make interpretations if the real names were there.
+```
+
+Descriptive Statistics - the mpg variable is our dependent/target/response variable.
+
+```{r}
+str(cars_data) # it can be seen that there would be a need to changed data types for some variables like the horsepower from character to numerical. And Origin ought to be a factor.
+``` 
+
+```{r}
+summary(cars_data)
+```
+Observations:
+- For the variables where the Mean and median of Displacement values is very different suggests a skewed distribution and presence of outliers.
+
+
+Data Cleaning :
+
+1. Variable conversion : horsepower -  * It has a character type, but character value doesn't mean anything. It's better to change it into a numeric type. 
+
+```{r}
+# Convert factor to numeric
+cars_data$horsepower <- as.numeric(cars_data$horsepower)
+summary(cars_data$horsepower)
+```
+Observations:
+- It can be seen now that there appear to be an obvious difference between the median and mean indicating a skewed distribution and possible presence of outliers.
+- Also there are missing values which didn't show because it was recorded as Character.
+These will be investigated during the visualizations.
+
+
+2. Variable transformation : origin
+ It has encoded values of location where the cars were manufactured. It is a numeric variable, but should be a factor type.
+
+Same will be converted  into factor type and re-encoded with the values "North America","Europe", and "Asia" respectively as indicated in the data dictionary
+
+```{r}
+# creation of factor levels for categorical variable Origin indicating the country of origin for the cars.
+cars_data$origin <- as.factor(cars_data$origin)
+levels(cars_data$origin) <- c( "North America", "Europe", "Asia")
+```
+
+
+Missing Value Treatment 
+```{r}
+# Check the missing values in the dataset
+sum(is.na(cars_data))
+
+# Check which column has missing values
+colSums(is.na(cars_data))
+```
+- As can be seen there are 6 mising values in the Horsepower variable. We would treat this by replacing all missing values with the median.
+
+```{r}
+# missing value imputation
+cars_data$horsepower[which(is.na(cars_data$horsepower))]<- median(cars_data$horsepower,na.rm = T)
+
+# check the missing value again. 
+sum(is.na(cars_data))
+```
+
+
+Data Cleaning and transformation
+
+```{r}
+cars_data$cylinders <- as.factor(cars_data$cylinders)
+```
+
+variable : car.name
+
+```{r}
+cars_data$car.name <- as.factor(cars_data$car.name)
+# Check the levels of car.name variable
+levels(cars_data$car.name)   # Alternatively use unique(cars_data$car.name)
+
+# There are 305 levels of car.name variable, lets first check how to reduce levels of this variable
+```
+- We can see that the first letter of each string of this variable is the name of a car. 
+- So, Extract the first word of each string and store it into the same variable "car.name."
+
+```{r}
+cars_data$car.name <-gsub("\\ .*", "", cars_data$car.name)
+cars_data$car.name <-as.factor(cars_data$car.name)
+# Check the levels of car.name variable
+levels(cars_data$car.name)
+```
+- You can see that the spelling of maxda and mazda , vokswagen and volkswagen etc. are incorrect, so we need to clean these levels . "chevroelt", "chevrolet", "chevy" represents same car company name - "chevrolet", like these there are misspelt in company/brand of the cars
+
+
+```{r}
+levels(cars_data$car.name)[7:9] <- "chevrolet"
+levels(cars_data$car.name)[13:14] <- "honda"
+levels(cars_data$car.name)[14:15] <- "mazda"
+levels(cars_data$car.name)[15:16] <- "mercedes"
+levels(cars_data$car.name)[26:27] <- "toyota"
+levels(cars_data$car.name)[c(28:29,31)] <- "volkswagen" 
+levels(cars_data$car.name)
+```
+-Now we have 29 unique levels of car manufacturers/make
+
+
+Variable : model 
+```{r}
+table(cars_data$model)
+```
+- It has total 13 unique years. "model" column has the year in which the car was built
+- A new column which gives us the information about how old a car is and would help us in the analysis to get more useful insights.
+
+```{r}
+cars_data$Age_of_Car<-123-cars_data$model
+
+summary(cars_data$Age_of_Car)
+```
+- Since the values are given as 70,71 etc instead of 1970 ,1971 we should subtract it from 120 to obtain age of the car
+- Now that we know how old a car is let us bin it into different categories
+
+
+```{r}
+# 35-45 years old car ->  "newer_models"
+# 46-55 years old car ->  "older_models"
+
+cars_data$model_cat <- ifelse(cars_data$Age_of_Car < 46 ,"newer_models", "older_models")
+
+ ```
+
+```{r}
+cars_data
+```
+
+
+VISUALIZATION 
+
+Univariate and Bivariate analysis
+```{r}
+#Function to plot histogram and boxplot simultaneously
+plot_histogram_n_boxplot = function(variable, variableNameString, binw){
+  h = ggplot(data = cars_data, aes(x= variable))+
+    labs(x = variableNameString,y ='count')+
+    geom_histogram(fill = 'green',col = 'white',binwidth = binw)+
+    geom_vline(aes(xintercept=mean(variable)),
+               color="black", linetype="dashed", size=0.5)
+  b = ggplot(data = cars_data, aes('',variable))+ 
+    geom_boxplot(outlier.colour = 'red',col = 'red',outlier.shape = 19)+
+    labs(x = '',y = variableNameString)+ coord_flip()
+  grid.arrange(h,b,ncol = 2)
+}
+
+
+```
+
+```{r echo=FALSE}
+# Dependent variable mpg
+
+plot_histogram_n_boxplot(cars_data$mpg,"mpg",2)
+
+#The distributions of mpg is right skewed.
+```
+
+
+
+```{r echo=FALSE}
+plot_histogram_n_boxplot(cars_data$weight,"weight",300)
+```
+- The distributions of weight is right skewed.
+
+
+```{r echo=FALSE}
+plot_histogram_n_boxplot(cars_data$horsepower,"horsepower",10)
+```
+- The distributions of mpg is right skewed. Horsepower has outliers which can affect our linear model s we have to handle these outliers.
+
+```{r echo=FALSE}
+plot_histogram_n_boxplot(cars_data$displacement,"displacement",20)
+```
+- The distributions for displacement is right skewed/tailed.
+
+
+```{r echo=FALSE}
+plot_histogram_n_boxplot(cars_data$acceleration,"acceleration",1)
+
+```
+- The distributions for acceleration looks normally distributed, and so we will choose to ignore the outliers in its case
+
+
+
+```{r echo=FALSE}
+
+ggplot(cars_data, aes(x =cylinders)) +
+  geom_bar( fill = "green", color ="orange") +
+  xlab("Category of Models")
+
+```
+- There are many more four-cylinders cars than six- or eight-cylinders cars. 3 and 5 cylinders can be found in very less cars.
+
+```{r echo=FALSE}
+ggplot(cars_data, aes(x =model_cat)) +
+  geom_bar( fill = "green", color ="orange") +
+  xlab("Category of Models")
+```
+- Old cars are more whereas the count for very_old and new_models year is roughly equivalent.
+
+```{r echo=FALSE}
+
+ggplot(cars_data, aes(origin)) + geom_bar(fill = "green", color ="orange")+ xlab("Origin of car")
+
+```
+- Most of the cars originated in North America followed by Asia.
+
+
+Multivariate Correlation plot between the numerical variables
+```{r echo=FALSE}
+num_vars = sapply(cars_data[,c(-7,-10)], is.numeric)
+DataExplorer::plot_correlation(cars_data[,num_vars])
+
+#library(GGally)
+
+suppressWarnings({
+pairs_plot = ggpairs(cars_data[,c(1,3:6)] ,mapping = ggplot2::aes(colour= cars_data$model_cat), title = "MULTI VARIATE PLOT OF ALL NUMERICAL VARIABLES", progress = FALSE)
+print(pairs_plot)
+})
+
+```
+- Correlation between dependent variable and independent variable is to be considered when modelling a prediction in a dataset, but if there is high correlation amongst independent variables themselves, that causes problem in interpreting statistical models and therefore will treat them later.
+
+- Cylinders,displacement,horsepower,weight shows a negative correlation with mpg implying as these factors increase the mpg decreases
+
+- Acceleration has a positive correlation with the mpg implying as Acceleration of a car increases the mpg requirement increases.
+
+- We can see that our independent variables show a high correlation with each other contributing to multicollinearity that needs to be taken care of much later.
+
+
+Single plots to shows this individual relationships
+```{r echo=FALSE}
+ggplot(cars_data, aes(x = cylinders, y = mpg)) + 
+  geom_point()
+```
+- The cars with 4 cylinders have the maximum mpg which keeps on decreasing as we increasing number of cylinders
+
+
+```{r echo=FALSE}
+ggplot(cars_data, aes(x = displacement, y = mpg)) + 
+  geom_point()
+
+ggplot(cars_data, aes(x = displacement, y = mpg)) + 
+  geom_point()+geom_smooth()
+```
+- Displacement shows a negative correlation with mpg. In the second graph we can see that there is a slight non linear relationship between mpg and displacement.
+
+
+```{r echo=FALSE}
+ggplot(cars_data, aes(x = horsepower, y = mpg)) + 
+  geom_point()
+
+ggplot(cars_data, aes(x = horsepower, y = mpg)) + 
+  geom_point()+geom_smooth()
+```
+- Horsepower shows a negative correlation with mpg.
+- In second graph we can see that there is a slight non linear relationship between mpg and horsepower.
+
+
+```{r echo=FALSE}
+ggplot(cars_data, aes(x = weight, y = mpg)) + 
+  geom_point()
+
+ggplot(cars_data, aes(x = weight, y = mpg)) + 
+  geom_point()+geom_smooth()
+
+```
+- Weight shows a negative correlation with mpg.
+- In second graph we can see that there is a slight non linear relationship between mpg and weight.
+
+
+```{r echo=FALSE}
+ggplot(cars_data, aes(x = acceleration, y = mpg)) + 
+  geom_point()
+
+ggplot(cars_data, aes(x = acceleration, y = mpg)) + 
+  geom_point()+geom_smooth()
+```
+- There is a positive correlation present of Acceleration with mpg.
+- In second graph we can see that there is a slight non linear relationship between mpg and acceleration.
+
+```{r echo=FALSE}
+ggplot(cars_data, aes(x = model_cat, y = mpg)) + 
+  geom_boxplot()
+```
+- The newer models of cars require more mpg as compared to the previous models.
+
+```{r echo=FALSE}
+ggplot(cars_data, aes(x = origin, y = mpg)) + 
+  geom_boxplot()
+```
+- Cars originating from the Asian regions shows more requirement of more mpg.
+
+
+
+Outlier treatment
+
+As observed earlier horsepower has outlier and we need to treat them as linear models are sensitive to the effects of outliers
+
+```{r}
+quantile(cars_data$horsepower,c(0.01,0.02,0.03,0.1,0.2,0.3,0.4,0.50,0.6,0.7,0.8,0.9,0.95,0.99,1)) 
+```
+
+ Capping data at 95% to treat the outliers
+```{r}
+cars_data$horsepower[which(cars_data$horsepower>180)] <-180 
+```
+
+more engineering towards model building
+```{r}
+#we can now drop the age of the car, name  and model year
+cars_data$Age_of_Car<-NULL
+cars_data$model<-NULL
+cars_data$car.name <- NULL
+```
+
+
+MODEL BUILDING
+
+# Model Building Approach :
+
+1. Partition the data into train and test set.
+2. Build a Linear Regression model on the train data.
+3. Test the data on test set.
+
+
+Split into train and test
+
+OPTION 1 
+```{r}
+#library(caTools) # for split
+
+install.packages("caTools")
+# Set seed to ensure reproducibility
+
+set.seed(1234)
+
+sample = sample.split(cars_data$mpg, SplitRatio = 0.7)
+traindata = subset(cars_data, sample == TRUE)
+testdata = subset (cars_data, sample == FALSE)
+traindata
+testdata
+## View to see the distribution of the dependent variable accross the split in comparison to total distribution
+
+```
+
+```{r}
+head(traindata)
+
+nrow(traindata)
+nrow(testdata)
+
+```
+
+
+OPTION 2
+```{r}
+
+set.seed(1000) #To ensure reproducibility
+
+# use the function sample() to randomly sample 70% rows into train data and 30% to test data
+indices= sample(1:nrow(cars_data), 0.7*nrow(cars_data))
+
+```
+* Splitting the data into 70-30 by taking a random sample from the data
+
+```{r}
+# Training set
+trainset=cars_data[indices,]
+
+head(cars_data)
+# Test set
+testset=cars_data[-indices,]
+
+head(trainset)
+
+nrow(trainset)
+nrow(testset)
+```
+
+
+# Creating a baseline model :
+* A baseline model in Linear Regression is the average of the dependent variable as the prediction. As maybe a guide for comaprison later
+
+```{r}
+# for the whole dataset
+avg_mpg<-mean(traindata$mpg)
+avg_mpg
+```
+
+RMSE for train (Baseline)
+```{r}
+RMSE_train_baseline=sqrt(mean((traindata$mpg-avg_mpg)**2))
+RMSE_train_baseline
+
+```
+
+RMSE for test (Baseline)
+```{r}
+RMSE_test_baseline=sqrt(mean((testdata$mpg-avg_mpg)**2))
+RMSE_test_baseline
+```
+
+
+Build a Linear Regression model on the train dataset
+
+* lm is used to fit a linear model and perform regression
+* formula is a symbolic description of the model to be fitted like dependent_variable~Independent_variables
+
+```{r}
+model_1 <-lm(formula =  mpg~. ,data=traindata)
+summary(model_1)
+```
+
+-- Understanding the output of Linear Regression model 
+
+Model performance :
+
+- F-statistics : This is a test on the model which is performed with a hypothesis on the coefficients 
+
+    Ho : The coefficient for all the features is 0 (Null Hypothesis : Default theory)
+
+    Ha : At least one of the feature has coefficient not equal to 0. ( Alternative Hypothesis)
+
+and to test the above hypothesis we get a  "p-value" ,a small p-value signifies that we have sufficient evidence to reject the null hypothesis.
+
+In our model we have got a p-value of 2.2e-16 (<0.05) and hence we reject the null hypothesis and vice versa if it were above 0.05
+
+   
+- Multiple R-squared and Adjusted R-squared : It is always between 0 to 1, high value signifies better percentage of variation in the dependent variable.
+When we increase number of variables the Multiple R-squared value may increase but Adj R-squared only increases when the added column is significant for explaining the variation in the dependent variable.
+In our model we have got a multiple R-squared of 0.8402 and an adjusted R-squared of 0.834 which looks good
+
+Independent features :
+
+- Estimate/coefficient : This refers to how a one unit change in X can affect the  Y,and a unit increase in weight will lead to a 0.004 decrease in the mpg.
+Sign of the coefficients indicate if the relationship is positive or negative.
+
+- Pr(>|t|) : For each independent feature there is a null hypothesis and alternate hypothesis 
+
+    Ho : Independent feature is not significant 
+
+    Ha : Independent feature is that it is significant
+
+Pr(>|t|) gives P-value for each independent feature to check that null hypothesis.
+
+Asterisks mark aside p value define significance of Independent variable basis of which we can accept or reject the null hypothesis.
+Three asterisks indicate a highly significant p-value and no asterisks indicate that the variable is insignificant in describing the variation of the dependent variable.
+
+In this case cylinders column is not statistically significant where as weight column is significant.
+
+
+ 
+-- Multi-collinearity and VIF :
+
+- Multicollinearity occurs when predictor variables in a regression model are correlated. This correlation is a problem because predictor variables should be independent. 
+If the correlation between variables is high, it can cause problems when we fit the model and interpret the results.
+When we have multicollinearity the linear model, The coefficients that the model suggests are unreliable.
+
+- To get rid of with multicollinearity we use Variance Inflation Factor (VIF)
+
+- In order to check Multicolliniearity, we use Variance Inflation Factor(VIF) among the predictors.A value greater than 10 signifies high multicolliniearity and hence it is advisable to drop such features.
+
+
+-- Checking multicollinearity in data 
+```{r}
+olsrr::ols_vif_tol(model_1)
+```
+
+Removing the cylinder column with the highest VIF and creating the model again - cylinder
+
+```{r}
+colnames(traindata)
+model_2<-lm(formula = mpg~ displacement + horsepower + weight + acceleration +  origin + model_cat ,data=traindata)
+
+summary(model_2)
+```
+
+
+ Checking multicollinearity in data 
+
+```{r}
+vif(model_2)
+olsrr::ols_vif_tol(model_2)
+
+```
+We see that VIF value has decreased for other variables but we will still remove one of horsepower or displacement
+How do we choose the one to remove
+
+
+###### Removing displacement and creating the model again
+```{r}
+model_3<-lm(formula = mpg~  horsepower + weight + acceleration +  origin + model_cat  ,data=traindata)
+
+summary(model_3)
+```
+
+#### Checking multicollinearity in data 
+
+```{r}
+olsrr::ols_vif_tol(model_3)
+```
+
+###### Removing horsepower and creating the model again
+```{r}
+model_4 <- lm(formula = mpg~  weight + acceleration +  origin + model_cat ,data=traindata)
+
+
+summary(model_4)
+```
+
+#### Checking multicollinearity in data 
+
+```{r}
+olsrr::ols_vif_tol(model_4)
+```
+##### Multicollinearity from the data has been removed. 
+
+
+
+# Applying stepwise method to create the best model
+
+* In General, stepAIC chooses the best model based on AIC(Akaike information criterion), It is very useful for high-dimensional data containing multiple predictor variables. 
+
+* More info: http://www.sthda.com/english/articles/37-model-selection-essentials-in-r/154-stepwise-regression-essentials-in-r/
+
+
+```{r}
+model_5 <- stepAIC(model_4, direction="both",k=5)
+
+#Summary of AIC model
+summary(model_5)
+
+```
+
+
+## Let's test if our model and data hold the assumptions of Linear Regression  
+
+##### Linear Regression has following assumptions :
+1. Mean of the residuals should be 0
+2. Linearity of the data-There is a linear relationship between response and explanatory variables
+3. Normality of residuals-Residuals should be normally distributed
+4. No multicollinearity - the explanatory variables should be independent of each other and should not have linear relationship
+5. Homoscadacity - Residuals have a constant variance
+
+
+#### 1. Mean of the Residuals should be 0
+```{r}
+mean(model_5$residuals)
+```
+
+* Mean of residuals is 0.
+
+
+#### 2. Linearity of the data
+
+* The linearity assumption can be checked by inspecting the Residuals vs Fitted plot which should not show a pattern in the distribution
+
+```{r echo=FALSE}
+plot(model_5,1)
+```
+
+* We can see a pattern in the resid-plot hence violating the assumption of Linear Regression
+
+## --------------------------------------------------------------------------------------------------------------------------------
+
+##### Since the residual plot has some pattern, this indicates nonlinearity amongst the dependent and the independent variables. A simple approach to tackle this is to use non-linear transformations of the dependent variable, such as log(x), sqrt(x) and x^2, in the regression model.
+
+##### Hence We will use boxcox transformation of the forecast package. 
+
+* The BoxCox transformation gives us a lambda value on the  basis of which we select the type of transformation to be used.
+
+* If the value of lambda = -2.5 to -1.5 then inverse square (1/y^2)
+
+* If the value of lambda = -1.5 to -0.75 then reciprocal (1/y)
+
+* If the value of lambda = -0.75 to -0.25 then inverse square root (1/sqrt(y))
+
+* If the value of lambda = -0.25 to 0.25 then natural log (log(y))
+
+* If the value of lambda = 0.25 to 0.75 then square root (sqrt(y))
+
+* If the value of lambda = 0.75 to 1.5 then none
+
+* If the value of lambda = 1.5 to 2.5 then square (y^2)
+
+```{r}
+# using BoxCox transformation
+library(forecast)
+forecast::BoxCox.lambda(cars_data$mpg)
+
+```
+
+* Lambda = 0.5350094
+* Hence, we will use the sqrt(y) transformation
+
+```{r}
+# Create a new variable for sqrt(mpg)
+cars_data$SQmpg=sqrt(cars_data$mpg)
+
+```
+
+* Now we will build the model again and  see if 2there are any changes
+
+
+
+```{r}
+#library(caTools) # for split
+
+# Set seed to ensure reproducibility
+
+set.seed(1234)
+
+sample2 = sample.split(cars_data$mpg, SplitRatio = 0.7)
+traindata2 = subset(cars_data, sample2 == TRUE)
+testdata2 = subset (cars_data, sample2 == FALSE)
+
+## View to see the distribution of the dependent variable accross the split in comparison to total distribution
+
+```
+
+```{r}
+head(traindata2)
+
+nrow(traindata2)
+nrow(testdata2)
+
+```
+
+
+```{r}
+model_6 <-lm(formula =  SQmpg~.,data=traindata2[,-1])
+summary(model_6)
+```
+* We see that the  Adj. R-squared has improved from the previous model by about 6%
+
+#### Checking the multicollinearity
+```{r}
+olsrr::ols_vif_tol(model_6)
+```
+#### Removing the cylinder column with the highest VIF and creating the model again
+
+```{r}
+#colnames(traindata)
+model_7<-lm(formula = SQmpg~ displacement + horsepower + weight + acceleration +  origin + model_cat ,data=traindata2[,-1])
+
+summary(model_7)
+```
+
+#### Checking the multicollinearity
+
+```{r}
+olsrr::ols_vif_tol(model_7)
+```
+###### We see that VIF value has decreased for other variables , but still there are variables with vif>10
+ 
+
+###### Removing displacement and creating the model again
+```{r}
+model_8<-lm(formula = SQmpg~ horsepower + weight + acceleration +  origin + model_cat ,data=traindata2[,-1])
+
+summary(model_8)
+```
+
+
+```{r}
+olsrr::ols_vif_tol(model_8)
+```
+##### Multicollinearity from the model has been removed. 
+
+###### Removing horsepower and creating the model again
+```{r}
+model_9<-lm(formula = SQmpg~  weight + acceleration +  origin + model_cat ,data=traindata2[,-1])
+
+summary(model_9)
+```
+```{r}
+olsrr::ols_vif_tol(model_9)
+    
+```
+
+# Applying stepwise method to create the best model
+
+* In General, stepAIC chooses the best model based on AIC(Akaike information criterion), It is very useful for high-dimensional data containing multiple predictor variables. 
+
+
+* More info: http://www.sthda.com/english/articles/37-model-selection-essentials-in-r/154-stepwise-regression-essentials-in-r/
+
+
+```{r}
+model_10 <- stepAIC(model_9, direction="both",k=5)
+
+#Summary of AIC model
+summary(model_10)
+
+```
+* This is our final model 
+
+
+## Lets test the assumptions of Linear Regression again 
+
+#### 1. Mean of the Residuals should be 0
+```{r}
+mean(model_10$residuals)
+```
+
+* Mean of residuals is 0.
+
+
+#### 2. Linearity of the data
+
+* The linearity assumption can be checked by inspecting the Residuals vs Fitted plot 
+
+```{r echo=FALSE}
+plot(model_10,1)
+```
+* We see that after transformation the pattern has faded a little.
+
+
+
+#### 3. Normality of residuals
+
+* The QQ plot of residuals can be used to visually check the normality assumption. The normal probability plot of residuals should approximately follow a straight line.
+
+```{r echo=FALSE}
+plot(model_10,2)
+```
+
+
+* Most of the points are lying on the straight line in QQ plot but a few points on the extreme side don't.
+
+```{r}
+model_10
+```
+
+
+#### 4.Homogeneity of variance
+* This assumption can be checked by examining the scale-location plot, 
+```{r echo=FALSE}
+plot(model_10,3)
+```
+* We can see a constant distribution of fitted values vs the residuals hence we can conclude that the distribution is homoscadastic
+
+#### 5. vif test for multicolliniearity
+
+```{r}
+vif(model_10)
+```
+
+* There is no multicollinearity present in the model
+
+
+
+# Predictions on Test data
+```{r}
+
+# removing the mpg and SQmpg columns from test data
+testdata3<-testdata2[,-c(1,9)]
+
+
+# Test this model to the test dataset.
+Predict1 <- predict(model_10,testdata3)
+
+
+#-----------------------------------------------------------------------------------------
+# Add a new column "test_predict" into the test dataset
+testdata2$test_mpg <- Predict1
+testdata2$pred_mpg_norm <- testdata2$test_mpg^2
+#-----------------------------------------------------------------------------------------
+```
+
+```{r}
+
+testdata2[,c(1,12)]
+
+```
+
+
+## Model Evaluation 
+* Model metric for evaluation : R-squared value
+```{r}
+cor(testdata2$SQmpg,testdata2$test_mpg)
+cor(testdata2$SQmpg,testdata2$test_mpg)^2
+
+# Train R-squared
+
+cor(traindata2$SQmpg,model_10$fitted.values)^2
+```
+* Train R2 value: R2 is also equal to the correlation square between the actual value and predicted value
+
+
+###### RMSE of train on fitted model 
+* Since we performed a square root transformation we need to use the square of the fitted values to get the RMSE values on the same scale
+```{r}
+sqfit=model_10$fitted.values**2
+rmse_train<-sqrt(mean((traindata2$mpg-sqfit)**2))
+rmse_train
+```
+
+###### RMSE of test on fitted model 
+
+```{r}
+sqpred=testdata2$test_mpg**2
+rmse_test<-sqrt(mean((testdata2$mpg-sqpred)**2))
+rmse_test
+```
+
+#### Generating a tabular output
+```{r}
+Name = c("RMSE_train_baseline", "RMSE_test_baseline", "RMSE_train","RMSE_test")
+Root_Mean_Squared_Error = c(RMSE_train_baseline,RMSE_test_baseline, rmse_train, rmse_test)
+output = data.frame(Name,Root_Mean_Squared_Error)
+output
+
+```
+
+
+### CONCLUSION :
+
+* We have managed to build a linear regression model that is able to explain 84% variation (R square) in mpg values of cars.
+* The final model uses only 4 variables.
+* The baseline RMSE has been reduced to a great extent by our model
+* R-squared of both test and train are nearly similar. Thus the model has not overfitted or underfitted on the data
+
+
+
+### Business Insights
+
+* Weight of the car is an important feature when it comes to predicting the miles per gallon of a car. Higher the weight, lesser the mpg.
+
+* Origin of the model is also a significant feature when it comes to predicting mpg values.
+
+* The Newer the car models lesser the mpg of the car. This indicates that as the years pass the cars are becoming less fuel efficient which isn't a good sign from environment perspective.
+
+
+
+### Things to try
+
+* Interpret the impact of change of one unit of predictor variable in the final model, on the response variable.
+
+* Perform multivariate analysis i.e plots among the independent variables to generate more insights.
+
+* Perform transformation on the independent features and check if the overall model gets better.
+
+# ---------------------------------------------------------------------------------------------------------------------------------
+y_predictions = intercept + slope * features
+
+
